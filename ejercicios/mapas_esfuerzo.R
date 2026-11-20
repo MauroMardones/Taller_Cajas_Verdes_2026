@@ -45,7 +45,32 @@ ggplot() +
   labs(title = marea, x = NULL, y = NULL, colour = NULL) +
   theme_bw()
 
-# --- 2. Esfuerzo de un arte, con los años en paneles -------------------------
+# --- 2. Tracks de todas las mareas de un arte, con los años en paneles -------
+# Cambia el arte y vuelve a correr el bloque
+arte_tracks <- "OTB"
+
+tracks <- CV_NV[LE_MET4 == arte_tracks][limites, on = "LE_MET4", nomatch = NULL]
+tracks[, estado := fifelse(SI_SPCA >= v_min & SI_SPCA <= v_max, "pesca", "no pesca")]
+setorder(tracks, FT_REF, SI_TIMESTAMP)
+
+tracks[, .(mareas = uniqueN(FT_REF)), by = ANYO][order(ANYO)]
+
+p_tracks <- ggplot() +
+  geom_sf(data = costa, fill = "grey85", colour = "grey50") +
+  geom_path(data = tracks, aes(SI_LONG, SI_LATI, group = FT_REF),
+            colour = "grey40", alpha = 0.2, linewidth = 0.2) +
+  geom_point(data = tracks, aes(SI_LONG, SI_LATI, colour = estado),
+             size = 0.1, alpha = 0.3) +
+  facet_wrap(~ ANYO) +
+  coord_sf(xlim = lim_lon, ylim = lim_lat) +
+  guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1))) +
+  labs(title = paste(arte_tracks, "- todas las mareas"), x = NULL, y = NULL, colour = NULL) +
+  theme_bw()
+p_tracks
+
+ggsave(paste0("figs/tracks_", arte_tracks, ".png"), p_tracks, width = 10, height = 8, dpi = 200)
+
+# --- 3. Esfuerzo de un arte, con los años en paneles -------------------------
 # Cambia el arte y vuelve a correr el bloque
 arte <- "DRB"
 
@@ -63,7 +88,7 @@ p_arte
 
 ggsave(paste0("figs/esfuerzo_", arte, ".png"), p_arte, width = 10, height = 8, dpi = 200)
 
-# --- 3. Esfuerzo total (todos los artes) ------------------------------------
+# --- 4. Esfuerzo total (todos los artes) ------------------------------------
 total <- esfuerzo[LE_MET4 == "TOTAL",
                   .(horas_pesca = sum(horas_pesca)),
                   by = .(lon_cel, lat_cel)]

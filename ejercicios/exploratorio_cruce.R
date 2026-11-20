@@ -17,6 +17,8 @@ CV_NV[, .(desde = min(SI_TIMESTAMP), hasta = max(SI_TIMESTAMP))]
 
 # --- 2. Qué se pierde en el cruce (inner join) -------------------------------
 # Mareas en cajas verdes (después del 02) y en notas de venta (brutas)
+# Las notas de venta se leen de nuevo de los xlsx porque el 03 no guarda
+# las mareas sin caja verde: el inner join las elimina antes de guardar CV_NV.
 CV <- read_fst("outputs/CV_2021_2024_ZE_fmt.fst", columns = "FT_REF", as.data.table = TRUE)
 mareas_cv <- unique(CV$FT_REF)
 rm(CV)

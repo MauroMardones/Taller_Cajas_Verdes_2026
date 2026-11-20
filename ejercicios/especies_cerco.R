@@ -15,7 +15,12 @@ library(rnaturalearth)
 dir.create("figs", showWarnings = FALSE)
 
 # --- 1. Notas de venta: una fila por especie y marea -------------------------
-# El script 03 colapsa las notas a una fila por marea; aquí necesitamos las especies
+# ¿Por qué se vuelven a leer los xlsx?
+# El script 03 lee las notas de venta con una fila por especie y marea (NV_all),
+# pero las colapsa a una fila por marea (arte dominante, kilos y euros totales)
+# antes del cruce. Lo que guarda es CV_NV, sin las columnas FAO ni NOMBRE_ESPECIE.
+# Aquí necesitamos las especies, así que se leen de nuevo las notas brutas.
+# Las cajas verdes NO se releen: los pings salen de CV_NV_2021_2024_ZE.fst (03).
 # Se leen todos los .xlsx de la carpeta, sin importar cómo se llamen
 ficheros_nv <- list.files("data/raw/notas_venta", pattern = "^[^~].*\\.xlsx$", full.names = TRUE)
 ficheros_nv

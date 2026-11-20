@@ -1,0 +1,15 @@
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.DS_Store
+outputs/*
+!outputs/.gitkeep
+figs/*
+!figs/.gitkeep
+slides/*_files/
+slides/*_cache/
+
+# Datos simulados: los genera cada alumno con data/simular_datos.R
+data/raw/
+data/flota_simulada.csv

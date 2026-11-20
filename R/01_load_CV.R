@@ -17,43 +17,31 @@ dir.create("figs",         showWarnings = FALSE, recursive = TRUE)
 lat_min <- 34; lat_max <- 38
 lon_min <- -8; lon_max <- -5
 
-# --- Rutas base --------------------------------------------------------------
-path_001 <- "data/raw/cajas_verdes"
-path_002 <- "data/raw/cajas_verdes"
+# --- Ficheros de entrada -----------------------------------------------------
+# Se leen TODOS los .csv de la carpeta, sin importar cómo se llamen.
+# Lo que importa es el contenido: separador ";" y estas columnas:
+#   FECHA;HORA;CFPO;VELOCIDAD;LATITUD;LONGITUD;RUMBO;¿EN PUERTO?
+# El año se obtiene de la columna FECHA, no del nombre del fichero.
+path_cv <- "data/raw/cajas_verdes"
+anyos   <- 2021:2024
 
-# Años con dos particiones en _001 (2017-2021) y en _002 (2023-2024)
-# 2022 solo tiene partición _1 en _001
-years_001 <- 2021:2022
-years_002 <- 2023:2024
+ficheros_cv <- list.files(path_cv, pattern = "\\.csv$", full.names = TRUE)
+ficheros_cv                                  # comprobar qué se va a leer
 
-# --- Función de lectura con filtro espacial inmediato -----------------------
-read_cv <- function(path, year) {
+# --- Lectura con filtro espacial inmediato ------------------------------------
+message("Leyendo Cajas Verdes...")
 
-  f1 <- file.path(path, paste0("Resultado_2_CAJAS_NUEVAS_", year, ".csv"))
-  f2 <- file.path(path, paste0("Resultado_2_CAJAS_NUEVAS_", year, "_2.csv"))
+lista_cv <- vector("list", length(ficheros_cv))
 
-  # Leer partición 1
-  dt1 <- fread(f1,
-               sep = ";",
-               dec = ".",
-               encoding = "UTF-8",
-               showProgress = FALSE)
+for (i in seq_along(ficheros_cv)) {
 
-  # Leer partición 2 si existe
-  if (file.exists(f2)) {
-    dt2 <- fread(f2,
-                 sep = ";",
-                 dec = ".",
-                 encoding = "UTF-8",
-                 showProgress = FALSE)
-    dt <- rbindlist(list(dt1, dt2), use.names = TRUE)
-    rm(dt1, dt2)
-  } else {
-    dt <- dt1
-    rm(dt1)
-  }
+  dt <- fread(ficheros_cv[i],
+              sep = ";",
+              dec = ".",
+              encoding = "UTF-8",
+              showProgress = FALSE)
 
-  # Renombrar columna con caracteres especiales
+  # Renombrar columnas con caracteres especiales
   setnames(dt, "\xbf\xa1EN PUERTO?",  "EN_PUERTO", skip_absent = TRUE)
   setnames(dt, "\xef\xbb\xbfFECHA",   "FECHA",     skip_absent = TRUE)
   # Alternativa si el BOM llega diferente:
@@ -64,31 +52,15 @@ read_cv <- function(path, year) {
   dt <- dt[LATITUD >= lat_min & LATITUD <= lat_max &
            LONGITUD >= lon_min & LONGITUD <= lon_max]
 
-  # Añadir columna de año
-  dt[, ANYO := year]
-
-  gc()
-  message(sprintf("  %d: %s filas tras filtro ZE", year, format(nrow(dt), big.mark = ".")))
-  return(dt)
+  message(sprintf("  %s: %s filas tras filtro ZE",
+                  basename(ficheros_cv[i]), format(nrow(dt), big.mark = ".")))
+  lista_cv[[i]] <- dt
+  rm(dt); gc()
 }
 
-# --- Loop 2017-2024 ----------------------------------------------------------
-message("Leyendo Cajas Verdes 2021-2024...")
-
-lista_cv <- vector("list", length(2021:2024))
-names(lista_cv) <- as.character(2021:2024)
-
-for (yr in years_001) {
-  lista_cv[[as.character(yr)]] <- read_cv(path_001, yr)
-}
-
-for (yr in years_002) {
-  lista_cv[[as.character(yr)]] <- read_cv(path_002, yr)
-}
-
-# --- Unir todos los años -----------------------------------------------------
+# --- Unir todos los ficheros -------------------------------------------------
 CV_all <- rbindlist(lista_cv, use.names = TRUE, fill = TRUE)
-#elimina la lista de data.tables por año de la memoria RAM — ya no 
+#elimina la lista de data.tables de la memoria RAM — ya no 
 # la necesitas porque todo está unido en CV_all.
 # fuerza al garbage collector de R a liberar esa memoria de inmediato,
 # en lugar de esperar a que R lo haga solo. 
@@ -96,7 +68,12 @@ CV_all <- rbindlist(lista_cv, use.names = TRUE, fill = TRUE)
 #para no quedarte sin RAM antes de continuar con el formateo.
 rm(lista_cv); gc()
 
-message(sprintf("\nTotal filas CV 2021-2024: %s", format(nrow(CV_all), big.mark = ".")))
+# --- Año desde la fecha del ping (FECHA = dd/mm/aaaa) -------------------------
+CV_all[, ANYO := as.integer(substr(FECHA, 7, 10))]
+CV_all <- CV_all[ANYO %in% anyos]
+
+message(sprintf("\nTotal filas CV: %s", format(nrow(CV_all), big.mark = ".")))
+print(CV_all[, .N, by = ANYO][order(ANYO)])
 message(sprintf("Columnas: %s", paste(names(CV_all), collapse = ", ")))
 
 # --- Guardar como .fst para relectura rápida ---------------------------------

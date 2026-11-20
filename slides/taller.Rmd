@@ -17,15 +17,17 @@ knitr::opts_knit$set(root.dir = normalizePath(".."))
 
 ```{r preparar, include = FALSE}
 library(data.table)
+library(fst)
 library(ggplot2)
-# Si no se ha corrido el flujo 01–04, se ejecuta aquí
-if (!file.exists("outputs/esfuerzo.rds")) {
+# Si no se ha corrido el flujo 01–04, se ejecuta aquí (01 y 02 en el mismo entorno)
+if (!file.exists("outputs/esfuerzo_2021_2024.fst")) {
+  e <- new.env()
   for (s in c("01_load_CV", "02_format_CV", "03_join_CV_NV", "04_effort_grid"))
-    source(file.path("R", paste0(s, ".R")), local = new.env())
+    source(file.path("R", paste0(s, ".R")), local = e)
 }
-CV    <- readRDS("outputs/CV_ZE_fmt.rds")
-CV_NV <- readRDS("outputs/CV_NV.rds")
-esf   <- readRDS("outputs/esfuerzo.rds")
+CV    <- read_fst("outputs/CV_2021_2024_ZE_fmt.fst", as.data.table = TRUE)
+CV_NV <- read_fst("outputs/CV_NV_2021_2024_ZE.fst",  as.data.table = TRUE)
+esf   <- read_fst("outputs/esfuerzo_2021_2024.fst",  as.data.table = TRUE)
 ```
 
 ## Objetivos
@@ -34,6 +36,7 @@ esf   <- readRDS("outputs/esfuerzo.rds")
 - Unirlos con las notas de venta para asignar un arte a cada ping
 - Identificar el estado de pesca con filtros de velocidad por arte
 - Calcular el esfuerzo (horas de pesca) en una grilla 0.05° con código C-square
+- Explorar los datos, mapear el esfuerzo y analizar las especies acompañantes del cerco
 
 **Todos los datos del taller son simulados** (`data/simular_datos.R`). Mismo formato que los ficheros de la Junta de Andalucía, sin barcos, posiciones ni ventas reales.
 
@@ -42,38 +45,62 @@ esf   <- readRDS("outputs/esfuerzo.rds")
 | Hora | Bloque |
 |---|---|
 | 09:00 | Presentación, datos y formato |
-| 09:30 | `01_load_CV.R`: lectura y recorte espacial |
-| 10:00 | `02_format_CV.R`: tiempo, velocidad, rumbo, marea |
-| 10:40 | Ejercicio 1 |
-| 11:00 | Pausa |
-| 11:20 | `03_join_CV_NV.R`: notas de venta y arte |
-| 11:50 | `04_effort_grid.R`: estado de pesca y grilla |
-| 12:20 | Ejercicios 2 y 3 |
+| 09:15 | Paquetes (`R/00_paquetes.R`) y simular los datos (`data/simular_datos.R`, ~5 min) |
+| 09:30 | `01_load_CV.R` y `02_format_CV.R` |
+| 10:10 | `exploratorio_cajas_verdes.R` y `exploratorio_notas_venta.R` |
+| 10:40 | `03_join_CV_NV.R` y `exploratorio_cruce.R` |
+| 11:10 | Pausa |
+| 11:30 | `04_effort_grid.R` |
+| 12:00 | `mapas_esfuerzo.R` |
+| 12:30 | `especies_cerco.R` |
 | 13:00 | Cierre |
 
 ## Flujo de trabajo
 
 ```
+R/00_paquetes.R → data/simular_datos.R → data/raw/
+
 data/raw/cajas_verdes/*.csv ─┐
-                             ├─ 01 → CV_ZE.rds
-                             ├─ 02 → CV_ZE_fmt.rds
-data/raw/notas_venta/*.xlsx ─┼─ 03 → CV_NV.rds
-                             └─ 04 → esfuerzo.rds + figs/esfuerzo_grilla.png
+                             ├─ 01 → CV_2021_2024_ZE.fst
+                             ├─ 02 → CV_2021_2024_ZE_fmt.fst
+data/raw/notas_venta/*.xlsx ─┼─ 03 → CV_NV_2021_2024_ZE.fst
+                             └─ 04 → esfuerzo_2021_2024.fst
+                                      ↓
+   exploratorio_cajas_verdes (tras 02) · exploratorio_notas_venta
+   exploratorio_cruce (tras 03) · mapas_esfuerzo · especies_cerco (tras 04)
 ```
 
-- Cada script lee la salida del anterior desde `outputs/`
-- Se puede retomar en cualquier paso con `readRDS()`
+- Cada script lee la salida del anterior desde `outputs/` (`.fst`)
+- 01 y 02 en la misma sesión: el 02 usa `CV_all` en memoria
 - Nombres de columnas en formato *tacsat* (VMStools / ICES WGSFD): `VE_REF`, `SI_LATI`, `SI_SPCA`…
+
+## Paquetes y datos simulados
+
+```{r, eval = FALSE}
+source("R/00_paquetes.R")         # instala los que faltan y los carga
+source("data/simular_datos.R")    # ~5 min, ~140 MB en data/raw/
+```
+
+`00_paquetes.R`:
+
+```{r, eval = FALSE}
+paquetes <- c("data.table", "fst", "tidyverse", "lubridate", "geosphere",
+              "readxl", "writexl", "sf", "rnaturalearth", "rnaturalearthdata",
+              "rmarkdown")
+faltan <- paquetes[!paquetes %in% rownames(installed.packages())]
+if (length(faltan) > 0) install.packages(faltan)
+for (p in paquetes) library(p, character.only = TRUE)
+```
 
 # Datos
 
 ## Cajas verdes: formato bruto
 
-Un CSV por año, separador `;`, BOM UTF-8, fecha `dd/mm/aaaa`:
+Uno o varios CSV por año, separador `;`, BOM UTF-8, fecha `dd/mm/aaaa`:
 
 ```{r, echo = FALSE}
-cat(readLines("data/raw/cajas_verdes/Resultado_2_CAJAS_NUEVAS_2023.csv",
-              n = 6, encoding = "UTF-8"), sep = "\n")
+f_cv <- list.files("data/raw/cajas_verdes", pattern = "\\.csv$", full.names = TRUE)[1]
+cat(readLines(f_cv, n = 6, encoding = "UTF-8"), sep = "\n")
 ```
 
 - `CFPO`: código del barco en el Censo de Flota Pesquera Operativa
@@ -82,33 +109,34 @@ cat(readLines("data/raw/cajas_verdes/Resultado_2_CAJAS_NUEVAS_2023.csv",
 
 ## Notas de venta: formato bruto
 
-Un xlsx por año, una fila por especie vendida y marea:
+Uno o varios xlsx por año, una fila por especie vendida y marea:
 
 ```{r, echo = FALSE}
-knitr::kable(head(readxl::read_xlsx("data/raw/notas_venta/NV 2023.xlsx"), 6))
+f_nv <- list.files("data/raw/notas_venta", pattern = "^[^~].*\\.xlsx$", full.names = TRUE)[1]
+knitr::kable(head(readxl::read_xlsx(f_nv), 6))
 ```
 
 - `ID_UDPROD` = `"ESP"` + CFPO con 9 dígitos → clave para unir con las cajas
-- `ARTE`: texto libre de la Junta → hay que recodificar a DCF (`LE_MET4`)
+- `ARTE`: texto de la Junta → hay que recodificar a DCF (`LE_MET4`)
 
 # 01 · Lectura
 
-## `01_load_CV.R`
+## `01_load_CV.R`: todos los ficheros, sin importar el nombre
 
 ```{r, eval = FALSE}
-read_cv <- function(path, year) {
-  f1 <- file.path(path, paste0("Resultado_2_CAJAS_NUEVAS_", year, ".csv"))
-  dt <- fread(f1, sep = ";", dec = ".", encoding = "UTF-8")
-  setnames(dt, grep("PUERTO", names(dt), value = TRUE), "EN_PUERTO")
+ficheros_cv <- list.files("data/raw/cajas_verdes", pattern = "\\.csv$", full.names = TRUE)
+
+for (i in seq_along(ficheros_cv)) {
+  dt <- fread(ficheros_cv[i], sep = ";", dec = ".", encoding = "UTF-8")
   dt <- dt[LATITUD  >= lat_min & LATITUD  <= lat_max &
            LONGITUD >= lon_min & LONGITUD <= lon_max]
-  dt[, ANYO := year]
-  dt
+  lista_cv[[i]] <- dt
 }
-CV_all <- rbindlist(lapply(anyos, function(yr) read_cv(path_cv, yr)))
+CV_all <- rbindlist(lista_cv, use.names = TRUE, fill = TRUE)
+CV_all[, ANYO := as.integer(substr(FECHA, 7, 10))]    # año desde la fecha
 ```
 
-- `fread` es rápido para decenas de millones de filas (los datos reales: ~67 M)
+- Con datos reales basta copiar los CSV en `data/raw/cajas_verdes/`, se llamen como se llamen
 - Filtrar la zona al leer reduce memoria y elimina pings con error de GPS (0, 0)
 
 # 02 · Formato
@@ -123,7 +151,7 @@ CV_all[, `:=`(
                                       cbind(LONGITUD[-1],  LATITUD[-1]))),
   SI_TDIFF      = c(NA, as.numeric(diff(SI_TIMESTAMP), units = "secs"))
 ), by = .(VE_REF, fecha_dia)]
-CV_all[, SI_SPCA := SI_DISTANCECA / SI_TDIFF * 1.94384]   # m/s → nudos
+CV_all[, SI_SPCA := (SI_DISTANCECA / SI_TDIFF) * 1.94384]   # m/s → nudos
 ```
 
 - Ordenar antes de calcular diferencias
@@ -139,7 +167,20 @@ ggplot(CV[SI_TDIFF < 450], aes(SI_TDIFF)) +
   theme_bw()
 ```
 
-Dos tipos de caja (~150 s y ~190 s), pings perdidos (cola larga) y transmisiones muy seguidas (< 60 s).
+Dos tipos de caja (~150 s y ~190 s): casi todos los pings caen en dos barras.
+
+## Intervalo entre pings (escala log)
+
+```{r, echo = FALSE, fig.height = 3.5}
+ggplot(CV[SI_TDIFF < 450], aes(SI_TDIFF)) +
+  geom_histogram(binwidth = 5) +
+  scale_y_log10() +
+  labs(x = "SI_TDIFF (s)", y = "Pings (escala log)") +
+  theme_bw()
+```
+
+- 10–40 s: transmisiones muy seguidas → velocidades calculadas irreales
+- ~300 y ~380 s: pings perdidos (2 × 151, 2 × 191); un Δt largo se suma entero como esfuerzo
 
 ## Velocidad calculada fuera de puerto
 
@@ -150,56 +191,92 @@ ggplot(CV[EN_PUERTO == 0 & SI_SPCA < 14], aes(SI_SPCA)) +
   theme_bw()
 ```
 
-Distribución bimodal: pesca (< 3 nudos) y navegación (7–9 nudos).
+Distribución bimodal: pesca (lenta) y navegación (7–10 nudos).
 
 # 03 · Notas de venta
 
 ## `03_join_CV_NV.R`: una fila por marea
 
 ```{r, eval = FALSE}
-arte_dominante <- NV_all[, .(KILOS_ARTE = sum(TOTAL_KILOS)), by = .(FT_REF, ARTE)]
-setorder(arte_dominante, FT_REF, -KILOS_ARTE)
+arte_dominante <- NV_all[, .(TOTAL_KILOS_ARTE = sum(TOTAL_KILOS, na.rm = TRUE)),
+                          by = .(FT_REF, ARTE)]
+arte_dominante <- arte_dominante[order(FT_REF, -TOTAL_KILOS_ARTE)]
 arte_dominante <- arte_dominante[, .SD[1], by = FT_REF]
 
 CV_NV <- merge(CV_all, NV_key, by = "FT_REF", all.x = FALSE)   # inner join
 ```
 
+- Se leen todos los xlsx de `data/raw/notas_venta/`; el año sale de `FECHAVENTA`
 - Sin colapsar, cada ping se repite tantas veces como especies vendidas
 - Arte dominante = el de más kilos en la marea
 - Inner join: se pierden mareas sin nota de venta y notas sin caja verde
+
+## Qué se pierde en el cruce
+
+```{r, echo = FALSE}
+f_nv_all <- list.files("data/raw/notas_venta", pattern = "^[^~].*\\.xlsx$", full.names = TRUE)
+nv_tmp <- rbindlist(lapply(f_nv_all, function(f) as.data.table(readxl::read_xlsx(f))), fill = TRUE)
+m_nv <- unique(paste0(nv_tmp$ID_UDPROD, "_", format(as.Date(nv_tmp$FECHAVENTA), "%Y_%m_%d")))
+m_cv <- unique(CV$FT_REF)
+knitr::kable(data.table(
+  conjunto = c("Mareas con caja verde", "Mareas con nota de venta", "Mareas en el cruce",
+               "Caja verde sin nota de venta", "Nota de venta sin caja verde"),
+  mareas   = c(length(m_cv), length(m_nv), uniqueN(CV_NV$FT_REF),
+               length(setdiff(m_cv, m_nv)), length(setdiff(m_nv, m_cv)))))
+```
+
+Inner join por `FT_REF` (barco + día): solo quedan las mareas presentes en las dos fuentes.
 
 ## Recodificación del arte
 
 ```{r, eval = FALSE}
 CV_NV[, LE_MET4 := fcase(
-  grepl("RASTRA",                 ARTE), "DRB",
-  grepl("DRAGAS|HIDRA|HIDR.ULIC", ARTE), "HMD",
-  grepl("^TRASMALLOS$",           ARTE), "GTR",
-  grepl("NASAS|TRAMPAS",          ARTE), "FPO",
+  grepl("RASTRA",                 ARTE, ignore.case = TRUE), "DRB",
+  grepl("DRAGAS|HIDRA|HIDR.ULIC", ARTE, ignore.case = TRUE), "HMD",
+  grepl("PALANGRES.*SIN ESPECIF", ARTE, ignore.case = TRUE), "LLSX",
+  grepl("ARRASTRE",               ARTE, ignore.case = TRUE), "OTB",
+  grepl("CERCO",                  ARTE, ignore.case = TRUE), "PS",
   ...
 )]
-CV_NV <- CV_NV[!grepl("ARRASTRE|CERCO", ARTE) & !is.na(LE_MET4)]
 ```
 
 ```{r, echo = FALSE}
 knitr::kable(CV_NV[, .(pings = .N), by = .(ARTE, LE_MET4)][order(-pings)])
 ```
 
-`grepl` con patrones ASCII evita problemas con las tildes de los xlsx.
-
 # 04 · Esfuerzo
 
-## Velocidad por arte y umbrales de pesca
+## Velocidad por arte y límites de pesca
 
-```{r, echo = FALSE}
-umb <- data.table(LE_MET4 = rep(c("DRB", "HMD", "FPO", "GTR"), each = 2),
-                  v = c(0.1, 1.0, 1.0, 3.0, 0.1, 3.0, 0.1, 2.0))
+```{r, echo = FALSE, fig.height = 4.8}
+lim <- data.table(
+  LE_MET4 = c("DRB", "HMD", "FPO", "GNS", "GTR", "LLS", "LLSX", "OTB", "PS"),
+  v_min   = c(0.1,   1.5,   0.1,   0.1,   0.1,   0.1,   0.1,    2.0,   0.1),
+  v_max   = c(1.0,   2.5,   0.3,   2.1,   2.1,   2.5,   2.5,    4.5,   1.6))
 ggplot(CV_NV[EN_PUERTO == 0 & SI_SPCA < 12], aes(SI_SPCA)) +
   geom_histogram(binwidth = 0.2) +
-  geom_vline(data = umb, aes(xintercept = v), colour = "red", linetype = 2) +
-  facet_wrap(~ LE_MET4, scales = "free_y", nrow = 1) +
+  geom_vline(data = lim, aes(xintercept = v_min), colour = "red", linetype = 2) +
+  geom_vline(data = lim, aes(xintercept = v_max), colour = "red", linetype = 2) +
+  facet_wrap(~ LE_MET4, scales = "free_y") +
   labs(x = "SI_SPCA (nudos)", y = "Pings") +
   theme_bw()
+```
+
+OTB (2.0–4.5) y PS (0.1–1.6): umbrales preliminares.
+
+## `04_effort_grid.R`: selección de artes y estado de pesca
+
+```{r, eval = FALSE}
+artes_sel <- c("DRB", "HMD", "FPO", "GNS", "GTR", "LLS", "LLSX", "OTB", "PS")
+# artes_sel <- "DRB"
+CV_NV <- CV_NV[LE_MET4 %in% artes_sel]
+
+CV_fil <- CV_NV[
+  (LE_MET4 == "DRB"  & SI_SPCA >= 0.1 & SI_SPCA <= 1.0) |
+  (LE_MET4 == "HMD"  & SI_SPCA >= 1.5 & SI_SPCA <= 2.5) |
+  ...
+  (LE_MET4 == "PS"   & SI_SPCA >= 0.1 & SI_SPCA <= 1.6)
+]
 ```
 
 ## `04_effort_grid.R`: grilla y C-square
@@ -208,40 +285,47 @@ ggplot(CV_NV[EN_PUERTO == 0 & SI_SPCA < 12], aes(SI_SPCA)) +
 res <- 0.05
 CV_fil[, lon_cel := floor(SI_LONG / res) * res + res / 2]
 CV_fil[, lat_cel := floor(SI_LATI / res) * res + res / 2]
-centroides[, csq := csquare.cod(lon_cel, lat_cel, degrees = res)]
+centroides[, csq := csquare.cod(lon_cel, lat_cel, degrees = 0.05)]
 
-esfuerzo <- CV_fil[, .(horas_pesca = sum(SI_TDIFF) / 3600,
-                       n_barcos    = uniqueN(VE_REF)),
-                   by = .(lon_cel, lat_cel, csq, ANYO, LE_MET4)]
+esfuerzo_arte <- CV_fil[, .(horas_pesca = sum(SI_TDIFF, na.rm = TRUE) / 3600,
+                            n_barcos    = uniqueN(VE_REF)),
+                        by = .(lon_cel, lat_cel, csq, ANYO, LE_MET4)]
 ```
 
 - Esfuerzo = Σ Δt de los pings en estado de pesca
 - C-square: código estándar ICES para intercambiar datos por celda
 
-## Esfuerzo por arte y año
+## Esfuerzo por arte (2021–2024)
 
 ```{r, echo = FALSE, fig.height = 4.8}
-ggplot(esf[LE_MET4 != "TOTAL"], aes(lon_cel, lat_cel, fill = horas_pesca)) +
+acum <- esf[LE_MET4 != "TOTAL", .(horas_pesca = sum(horas_pesca)),
+            by = .(lon_cel, lat_cel, LE_MET4)]
+ggplot(acum, aes(lon_cel, lat_cel, fill = horas_pesca)) +
   geom_tile(width = 0.05, height = 0.05) +
   scale_fill_viridis_c(trans = "log10", name = "Horas") +
-  facet_grid(ANYO ~ LE_MET4) +
+  facet_wrap(~ LE_MET4) +
   coord_quickmap() +
   labs(x = NULL, y = NULL) +
   theme_bw()
 ```
 
+# Ejercicios
+
 ## Ejercicios
 
-- `ejercicios/ejercicio_1.R`: exploración de pings, intervalos y velocidades
-- `ejercicios/ejercicio_2.R`: sensibilidad de las horas de pesca al umbral de velocidad
-- `ejercicios/ejercicio_3.R`: pings perdidos (límite de Δt) y resolución de la grilla
+- `ejercicios/exploratorio_cajas_verdes.R`: pings, barcos y mareas por año, pings en puerto, Δt y velocidad
+- `ejercicios/exploratorio_notas_venta.R`: artes declarados, especies, kg, euros y precios
+- `ejercicios/exploratorio_cruce.R`: qué se pierde en el cruce; barcos, mareas, captura, duración y velocidad por arte
+- `ejercicios/mapas_esfuerzo.R`: track de una marea y esfuerzo de un arte por año (con costa)
+- `ejercicios/especies_cerco.R`: composición de la captura del cerco y distribución espacio-temporal de las especies acompañantes (reparto de la captura entre pings, como `splitAmongPings` de VMStools)
 
-Soluciones en `ejercicios/soluciones/`.
+Correr por bloques; el arte o la especie se cambian en una variable al principio de cada bloque.
 
 ## Cierre
 
-- El flujo 01–04 es el mismo que se aplica a los datos reales (2018–2024, ~67 M pings)
+- El flujo 01–04 es el mismo que se aplica a los datos reales (~67 M pings)
+- Con datos reales: copiar los ficheros en `data/raw/` y ajustar los años
 - Puntos críticos: intervalos anómalos, umbrales de velocidad por arte, arte dominante por marea
-- Siguientes pasos: mapas acumulados, caladeros principales (CFG 75 % / 90 %), centro de gravedad, tendencias por celda
+- Siguientes pasos: caladeros principales (CFG 75 % / 90 %), centro de gravedad, tendencias por celda
 
-Código y datos simulados: repositorio del taller en GitHub.
+Código: https://github.com/MauroMardones/Taller_Cajas_Verdes_2026

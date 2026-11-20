@@ -9,25 +9,37 @@ library(readxl)
 # CV_all debe estar en memoria desde 02_format_CV.R
 CV_all <- fst::read_fst("outputs/CV_2021_2024_ZE_fmt.fst", as.data.table = TRUE)
 
-# --- Ruta NV -----------------------------------------------------------------
-path_nv <- "data/raw/notas_venta"
+# --- Ficheros de entrada -----------------------------------------------------
+# Se leen TODOS los .xlsx de la carpeta, sin importar cómo se llamen.
+# Columnas necesarias: ID_UDPROD, FECHAVENTA, ARTE, TOTAL_KILOS, TOTAL_EUROS
+# El año se obtiene de FECHAVENTA, no del nombre del fichero.
+path_nv  <- "data/raw/notas_venta"
+years_nv <- 2021:2024
 
-# --- 1. Lectura NV 2021-2024 -------------------------------------------------
+# "^[^~]" excluye los ficheros temporales que crea Excel con el libro abierto
+ficheros_nv <- list.files(path_nv, pattern = "^[^~].*\\.xlsx$", full.names = TRUE)
+ficheros_nv                                  # comprobar qué se va a leer
+
+# --- 1. Lectura NV -------------------------------------------------------------
 message("Leyendo Notas de Venta...")
 
-years_nv <- 2021:2024
-lista_nv <- lapply(years_nv, function(yr) {
-  f <- list.files(path_nv, pattern = paste0("NV ", yr, "\\.xlsx$"), full.names = TRUE)
-  dt <- as.data.table(readxl::read_xlsx(f))
-  dt[, ANYO_NV := yr]
-  message(sprintf("  NV %d: %s filas", yr, format(nrow(dt), big.mark = ",")))
-  return(dt)
-})
+lista_nv <- vector("list", length(ficheros_nv))
+
+for (i in seq_along(ficheros_nv)) {
+  lista_nv[[i]] <- as.data.table(readxl::read_xlsx(ficheros_nv[i]))
+  message(sprintf("  %s: %s filas", basename(ficheros_nv[i]),
+                  format(nrow(lista_nv[[i]]), big.mark = ",")))
+}
 
 NV_all <- rbindlist(lista_nv, use.names = TRUE, fill = TRUE)
 rm(lista_nv); gc()
 
-message(sprintf("Total NV 2021-2024: %s filas", format(nrow(NV_all), big.mark = ",")))
+# Año desde la fecha de venta
+NV_all[, ANYO_NV := as.integer(format(as.Date(FECHAVENTA), "%Y"))]
+NV_all <- NV_all[ANYO_NV %in% years_nv]
+
+message(sprintf("Total NV: %s filas", format(nrow(NV_all), big.mark = ",")))
+print(NV_all[, .N, by = ANYO_NV][order(ANYO_NV)])
 
 # --- 2. Estandarizar NV ------------------------------------------------------
 # Renombrar ID_UDPROD → VE_REF

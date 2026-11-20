@@ -13,4 +13,4 @@ slides/*_cache/
 # Datos simulados: los genera cada alumno con data/simular_datos.R
 data/raw/
 data/flota_simulada.csv
-html*
+
